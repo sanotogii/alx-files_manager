@@ -66,12 +66,10 @@ class FilesController {
     const fileName = uuidv4();
     const localPath = path.join(folderPath, fileName);
 
-    // Ensure the folder exists
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
 
-    // Write file to disk
     const fileContent = Buffer.from(data, 'base64');
     fs.writeFileSync(localPath, fileContent);
 
@@ -88,6 +86,86 @@ class FilesController {
       isPublic: newFile.isPublic,
       parentId: newFile.parentId,
     });
+  }
+
+  static async getShow(req, res) {
+    const token = req.header('X-Token');
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const userId = await redisClient.get(`auth_${token}`);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const fileId = req.params.id;
+    const filesCollection = dbClient.db.collection('files');
+
+    try {
+      const file = await filesCollection.findOne({
+        _id: ObjectId(fileId),
+        userId: ObjectId(userId),
+      });
+
+      if (!file) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      return res.status(200).json({
+        id: file._id,
+        userId: file.userId,
+        name: file.name,
+        type: file.type,
+        isPublic: file.isPublic,
+        parentId: file.parentId,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
+
+  static async getIndex(req, res) {
+    const token = req.header('X-Token');
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const userId = await redisClient.get(`auth_${token}`);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const parentId = req.query.parentId || '0';
+    const page = parseInt(req.query.page, 10) || 0;
+    const filesCollection = dbClient.db.collection('files');
+
+    try {
+      const pipeline = [
+        { $match: { userId: ObjectId(userId) } },
+        { $match: { parentId: parentId === '0' ? 0 : ObjectId(parentId) } },
+        { $skip: page * 20 },
+        { $limit: 20 },
+        {
+          $project: {
+            id: '$_id',
+            userId: 1,
+            name: 1,
+            type: 1,
+            isPublic: 1,
+            parentId: 1,
+            _id: 0,
+          },
+        },
+      ];
+
+      const files = await filesCollection.aggregate(pipeline).toArray();
+      return res.status(200).json(files);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
   }
 }
 
